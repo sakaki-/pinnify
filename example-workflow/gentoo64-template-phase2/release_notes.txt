@@ -1,0 +1,246 @@
+Release v1.5.0
+--------------
+
+This release marks a significant milestone for the project, as the RPi4 is now supported (in addition to the RPi3 model B and B+, which remain supported too).
+
+If you would like to upgrade an existing, older version of this image to v1.5.0 (rather than just downloading and using the latest v1.5.0 image directly), please see below.
+
+Thanks to rapid upstream progress on aarch64 kernel work for the new board, there are surprisingly few compromises required when running the Pi4 under a 'pure' 64-bit OS such as this one. Specifically, for the Pi4 in this 1.5.0 release:
+
+* V3D graphics acceleration is supported in X under vc4-fkms-v3d / Mesa;
+* the full 4GiB complement of memory is usable (if you are lucky enough to own a top-of-the-line model, that is ^-^);
+* the V4L2 M2M video codecs and optional plug-in camera module are both usable;
+* use of dual HDMI displays is supported;
+* Bluetooth, fast Ethernet, and dual-band WiFi work.
+
+Changes in this release (see main project page for further details):
+
+* Ground-up recompiled all software on the image (userland and kernel) using march=armv8-a+crc -mtune=cortex-a72 -O2 CFLAGS, meaning it should be optimized for the out-of-order execution provided by the newer Pi4's Cortex-A72 SoC, while still retaining backwards compatibility with the older RPi3 B/B+'s Cortex-A53.
+
+* Changed the project's GitHub name, from gentoo-on-rpi3-64bit to gentoo-on-rpi-64bit, to reflect the fact that the RPi4 is now also supported. Thanks to the way GitHub does things, people trying to find the old project should be automagically redirected to the renamed version. My bad in choosing an over-limiting moniker first time ><
+
+* Updated the RPi3 kernel (from the bcmrpi3-kernel-bis weekly autobuild) to version 4.19.66.20190816.
+
+* Added an additional kernel (from the bcm2711-kernel-bis weekly autobuild). This second kernel is used when booting the RPi4, lives at /boot/kernel8-p4.img, and is a tweaked version, as the name suggests, of a completely separate configuration: bcm2711_defconfig, as opposed to bcmrpi3_defconfig. The two kernels have distinguished release names, and so separate subdirectories in /lib/modules, but as they are built together, they share a common kernel tree tip commit. The kernel version used in this release includes (on the bcm2711 build) the recently-upstreamed PR#3144 (which allows the full 4GiB of RAM to be used, where present) and PR#3063 (which enables the use of V3D acceleration on the Pi4). The two kernels have auto-generated ebuilds by which they are installed: sys-kernel/bcmrpi3-kernel-bis-bin and sys-kernel/bcm2711-kernel-bis-bin, respectively.
+
+* Boot firmware updated to sys-boot/rpi3-64bit-firmware-1.20190718, and userland libraries to media-libs/raspberrypi-userland-1.20190808 (for dual-monitor aware tvservice utility etc.)
+
+* Size of the boot partition on the image expanded, from 63MiB to 255MiB, to accommodate the new dual-kernel setup just described (required for RPi3/4 booting).
+
+* Added dev-lang/go (it's been the most frequently requested package), and (an arm64 Pi4 patched version of) dev-libs/pigpio (for easy control of GPIOs) to the core package set.
+
+* Added sys-block/gparted (for disk management), net-misc/xorgxrdp and net-misc/tigervnc[server] (for remote access), media-sound/pavucontrol for pulseaudio (also made this a default USE flag), and x11-misc/arandr (for multi-screen layouts) to the xfce package set. (Also modified the arandr ebuild to add a login service that auto-loads layouts saved to ~/.screenlayout/default.sh).
+
+* Added app-office/abiword to the apps set (a lighter alternative to libreoffice writer - which remains bundled too - that some may prefer).
+
+* Included a slightly tweaked media-libs/mesa to allow v3d acceleration on the RPi4. Standard vc4 acceleration on the RPi3 is still supported.
+
+* Updated the pyconfig_gen application (found at Settings->RPi Config Tool): now supports configuring a second monitor (on the Pi4), and also setting the WiFi regulatory domain (RPi3/4). A simple overclocking "manettino" ^-^ for the Pi4 is also provided (all permitted settings should be warranty-safe, per RPF advice, but use at your own risk!).
+
+* Updated the media-video/pi-ffcam "camera live view" applet to work with the Pi4 (found in the Multimedia menu).
+
+* Also updated the media/video/pi-ffplay application for the Pi4 (again found in the Multimedia menu, this is a trivial app to illustrate accessing the Pi 3/4's hardware video codecs via v4l2m2m).
+
+* Moved 6by9's patches to media-video/ffmpeg (upon which the two apps above rely) forward to version 4.1.4, as these don't seem to be upstream yet.
+
+* Tidied up a number of boot-time services for RPi4 compatibility (e.g., x11-misc/rpi3-safecompositor etc.). Note that for simplicity I have not renamed these, so please don't disable or remove services just because their name starts with rpi3- (as for the most part, they still do something useful on an RPi4 too!).
+
+* I did change the name of the main repo used by the image though, from rpi3 to genpi64, and migrated the custom profile too.
+
+* Version bumped sys-boot/rpi3-boot-config, to update the baseline /boot/config.txt file for use with the Pi4 (while still retaining compatibility with the Pi3B/B+).
+
+* Renamed the master meta-package, from rpi3-64bit-meta to rpi-64bit-meta.
+
+* Added LLVM_TARGETS="WebAssembly BPF" (in addition to the default AArch64), to allow dev-lang/rust to be built with the wasm USE flag.
+
+* Various minor ebuild tidy-ups.
+
+* All packages brought up-to-date against the Gentoo tree, as of 10 August 2019 (which means e.g., www-client/firefox-68.0.1, www-client/chromium-76.0.3809.87-r1, app-office/libreoffice-6.3.0.4 etc. are bundled).
+
+Notes and Caveats
+-----------------
+
+Updated EEPROM Firmware
+
+If you are using a Pi4, don't forget to update your EEPROM firmware; there's an official fix released that will allow your system to use ~300mW less power. For more information, please see https://www.raspberrypi.org/forums/viewtopic.php?p=1490467#p1490467.
+
+USB Shortcomings
+
+As this release comes early in the lifecycle of the RPi4, expect to find a number of bugs and issues with it! In particular, one major issue, (due, as I understand it, per this post by 6by9, to a lack of FIQ fast interrupt handling on aarch64) is that isochronous transfers over USB are likely to be pretty bad in 64-bit compared to 32-bit. For example, USB webcams etc will drop frames (bulk transfers, as you might get e.g. when copying large files to and from a storage device, work fine on USB under 64-bit however; as do low-speed peripherals such as mice and keyboards).
+
+Upgrading from an Earlier Release of the Image
+----------------------------------------------
+
+Users downloading this v1.5.0 image directly can of course omit the instructions below; as all settings have been correctly set up for you already.
+
+Users on earlier releases who wish to manually upgrade should follow the manual upgrade instructions to 1.4.2 below; the final step genup therein will actually do most of the work of getting you to v1.5.0.
+
+However, as v1.5.0 has a dual-kernel setup (to allow booting on the RPi4, which has a significantly different SoC to the RPi3), you next need to expand your boot partition, and then switch meta-package, to complete the upgrade.
+
+Let's begin by expanding the boot partition. On v1.4.2 and earlier, this is 63MiB in capacity, which is insufficient for a dual kernel system (something I should have anticipated, apologies ><). Since the root and boot (filesystems') partitions directly abut in v1.4.2, you need first to shrink, and then move forward, the root partition (and filesystem); and then expand the boot partition (and filesystem) to fill the space thus freed up.
+
+I recommend using the FOSS gparted graphical tool to do carry out these tasks - it is much less error-prone than using the command line. Begin by backing up your current Gentoo microSD card, then insert it into a Linux PC and run gparted (it is available in most distros). Select the second (root) partition of your card, and elect to shrink and move it, so it has 193MiB of preceding space. Then, select the first (boot) partition, and elect to expand it, from 63 to 256 Mib, with 0 space before and after (the tool will probably change its size to 255MiB automatically, to preserve alignment). Commit the operations, and wait for them to conclude (it may take up to half an hour or so).
+
+Once done, boot your image (on an RPi3) to ensure it is still functional, and check the amount of free space on /boot, using df -h. If all looks good, you can proceed to migrate to the new metapackage. Since you have just genup-ed, your overlays will be up-to-date, so now (working as root at your RPi3, booted into the image), issue:
+
+pi64 ~ #  emerge -v --nodeps dev-embedded/rpi-64bit-meta
+
+We use --nodeps here, as we need both metapackages around at the same time for the next step.
+
+Next, copy across any uncommented custom settings from /etc/portage/package.use/rpi3-64bit-meta to /etc/portage/package.use/rpi-64bit-meta (being sure to change any references to rpi3-64bit-meta to rpi-64bit-meta when you do). Note that for most users, this will be a no-op, as all lines in /etc/portage/package.use/rpi3-64bit-meta will be commented, as originally shipped, but it is always best to check.
+
+Once done, remove the old metapackage from your @world set; issue:
+
+pi64 ~ # emerge --deselect dev-embedded/rpi3-64bit-meta
+
+With that, you're all set to finalize the upgrade. To do so, simply run:
+
+pi64 ~ # genup
+
+Let this run to completion. Once done, run:
+
+pi64 ~ # dispatch-conf
+
+to review any modified configuration files. Pay particular attention to /boot/config.txt, as the distributed version of this file contains changes that are critical to booting successfully on the RPi4 (if you haven't made any changes to this file, dispatch-conf will silently upgrade it: however, many users will have changed it, either directly or via the pyconfig_gen application, in which case the utility will ask you what to do). If in doubt, press u when prompted, to use the new copy of the file.
+
+Once that's done, issue:
+
+pi64 ~ # ls /boot/kernel8*
+
+and you should see that you now have a kernel8-p4.img (the Pi4 kernel) installed, as well as the more usual kernel8.img (the Pi3 kernel) in place. And, if you run:
+
+pi64 ~ # eix -I dev-embedded/rpi-64bit-meta
+
+you should see that you have >= v1.5.0 installed. If so, congratulations, your upgrade is complete! You can now try booting your image on an RPi4 if you like ^-^ Good luck!
+
+
+Release v1.4.2
+--------------
+
+This release is a straightforward update to v1.4.1.
+
+Changes in this release (see main project page for further details):
+
+* Kernel updated, to sys-kernel/bcmrpi3-kernel-bis-bin-4.19.49.20190611). Fixes some Bluetooth issues experienced with the prior 4.19 kernel, and adds POE fan and (built-in) btrfs support.
+
+* Per email request from @iugamarian, added the following applications to the image:
+    media-video/mpv
+    net-p2p/transmission
+    sys-fs/ncdu
+    app-misc/mc
+
+* Various minor ebuild tidy-ups.
+
+* All packages brought up-to-date against the Gentoo tree, as of UTC EOD 12 June 2019 (which means e.g., www-client/firefox-67.0, www-client/chromium-74.0.3729.169-r1, app-office/libreoffice-6.2.4.2 etc. are bundled).
+
+Upgrading from an Earlier Release of the Image
+----------------------------------------------
+
+Users downloading this v1.4.2 image directly can of course omit the instructions below; as all settings have been correctly set up for you already.
+
+Users on earlier releases who wish to manually upgrade should follow the manual upgrade instructions to v1.4.1 below; the final step genup therein will actually bring you to a baseline v1.4.2 now.
+
+If you are already on v1.4.1, simply run sudo genup to reach a baseline v1.4.2. Then, continue reading as below.
+
+You can easily check your current version at any time, by issuing:
+
+demouser@pi64 ~ $ eix rpi3-64bit-meta
+
+Once the baseline upgrade is done, at your option add in the newly supported applications, by issuing:
+
+demouser@pi64 ~ $ sudo emerge -v media-video/mpv net-p2p/transmission sys-fs/ncdu app-misc/mc
+
+Next, ensure that the hardware real-time-clock (RTC) service is disabled; the RPi3 does not have the corresponding hardware device, and although harmless, this service causes annoying error messages at boot. Issue:
+
+demouser@pi64 ~ $ sudo rc-update del hwclock boot
+
+Then, be sure that you merge all configuration file updates. To do so, issue:
+
+demouser@pi64 ~ $ sudo dispatch-conf
+
+and follow the prompts (if you haven't modified this particular file yourself, the changes will already have happened, but if you have changed it, dispatch-conf will ask you what to do).
+
+Finally, be sure to reboot once the above upgrade process is complete, as a new kernel is installed during the process.
+
+
+Release v1.4.1
+--------------
+
+This is a minor, bugfix release to v1.4.0 (itself described further below). If you are already on v1.4.0, you can upgrade simply by running genup (or wait for the automated weekly update to do this for you).
+
+Users on releases earlier than v1.4.0 should follow the "Upgrading from an Earlier Release of the Image" instructions to 1.4.0 below; the final step genup therein will actually bring you to v1.4.1 now.
+
+You can easily check your current version at any time, by issuing:
+
+demouser@pi64 ~ $ eix rpi3-64bit-meta
+
+Changes in this release (see main project page for further details):
+
+* Upgraded the bundled chromium web browser, to www-client/chromium-72.0.3626.121-r1; this version fixes the serious CVE-2019-5786 bug (thanks to cjan for pointing this out), and also a problem that was preventing videos playing correctly on YouTube.
+
+* Made the boot-time services rpi3-spidev and rpi3-i2cdev core dependencies of rpi3-64bit-meta, so they are always installed, and also modified the rpi3-i2cdev service, so it only loads the relevant kernel module if I2C is turned on in /boot/config.txt. Fixes an issue where turning I2C on in the pyconfig_gen application was not sufficient to have it enabled after reboot. Thanks to procount for reporting.
+
+* Various minor ebuild tidy-ups.
+
+* All packages brought up-to-date against the Gentoo tree, as of 19 February 2019 (with the exception of chromium, which has been backported to address a serious security concern; as noted above).
+
+
+Release v1.4.0
+--------------
+
+This release is a significant update to v1.3.1 as, leveraging the hard work by the RPF's 6by9 and others on the rpi-4.19.y kernel, use of the Pi's camera module, and the Pi's hardware video codecs are now both supported! [1]
+
+If you would like to upgrade an existing, older version of this image to v1.4.0 (rather than just downloading and using the latest v1.4.0 image directly), please see below.
+
+Changes in this release (see main project page for further details):
+
+* Kernel migrated to rpi-4.19.y (sys-kernel/bcmrpi3-kernel-bis-bin-4.19.25.20190226). As just noted, this represents a significant upgrade, as a number of features (such as v4l2 m2m codec support) are only available in 4.19, and will not (aiui) be backported to 4.14. The boot firmware was also updated to sys-boot/rpi3-64bit-firmware-1.20190213, and the userland libraries to media-libs/raspberrypi-userland-1.20190114.
+
+* Thanks to advice and patches from the RPF's 6by9, added a version of ffmpeg that can both access the Pi's v4l2 camera (via /dev/video0) and access the Pi's hardware video codec capabilities, via v4l2 m2m (memory-to-memory) interfaces at /dev/video{10,11,12}. The h264_v4l2m2m, mpeg4_v4l2m2m, and (if you have purchased a license key) mpeg2_v4l2m2m codecs all currently work from 64-bit userland. (Note, I have primarily tested decoding, as that is relevant for video playback, but these endpoints should support hw-based encoding too (for h264 and mpeg4, anyhow).)
+
+* Added (via USE flag on media-plugins/gst-plugins-meta) the necessary additional gstreamer library, to allow it to also access the v4l2 m2m endpoints (media-plugins/gst-plugins-v4l2-1.14.4).
+
+* Added the pi-ffcam app, a trivial [2] 'live viewer' for the Pi camera module v1/v2 (available under the Multimedia menu). This streams an h264-encoded live video feed from the camera, decodes it using h264_v4l2m2m (i.e., a hardware codec, just for fun ^-^), and then displays the output in an SDL desktop window. It is built on ffmpeg / ffplay. Note that due to buffering, the stream has around a 1s lag. (Also note that you wouldn't build a 'real' live view app like this of course; it's main purpose is to provide confidence that the various interfaces are working.)
+
+* The media-tv/v4l-utils package is also included; this provides an app (Applications -> Multimedia -> V4L2 test Utility) that may also be used (inter alia) to live-view the camera (although I have found its GL output to be unreliable).
+
+* Added the pi-ffplay app, a trivial [2] video player that can utilize the Pi's built-in hardware codecs just described, for h264, mpeg4, and - if you have purchased the license - mpeg2. It may also be found under the Multimedia menu. The app prompts for a video to play, attempts to probe its video stream type, and plays it, forcing (where possible) an appropriate v4l2 m2m hardware codec (stream decode only; actual blit of the rendered bitmaps to the window is still via the regular pipeline). This uses the standard ffplay underneath, so consult its manpage for details (double-click to toggle full screen etc.) If the video contains an audio track, this will be played also. Unfortunately, the other bundled video playback apps (VLC, Kodi, and SMPlayer) do not yet leverage the m2m codec paths by default - at least, not in the versions currently provided. If you know how to make them do this (either by preference file, USE flag or patching) please let me know! It is a similar case (at the moment) for the bundled Firefox and Chromium browsers (the latter can use v4l2 m2m, but only in an ozone context right now). That's a shame - files like http://jell.yfish.us/media/jellyfish-50-mbps-hd-h264.mkv (1920x1080 50Mbps) choke the RPi3 (even B+) under software rendering, but display relatively smoothly when using the v4l2 m2m codecs (you can easily try for yourself, just download the file and try playing it with e.g. VLC or SMPlayer (the latter does the better job), then try again with ff-play). But as making the connection (particularly where ffmpeg or gstreamer are used 'under the hood') is a relatively straightforward matter, these facilities will hopefully be added in relatively short order.
+
+* The default GPU memory setting in /boot/config.txt has been increased, to 128 MiB from the prior (de minimis) 16 MiB. Per 6by9 and my own empirical tests, this should be sufficient to permit both camera and v4l2 m2m codec use simultaneously, for most use cases. The camera interface has also been selected by default (start_x=1). NB: if you do not need to use the codecs (or camera) please feel free to revert these settings (memory being a precious resource on the RPi3!).
+
+* The pyconfig_gen application has been updated; it now allows setting of gpu_mem, and selection of the camera interface (start_x=1).
+
+* Although I have elected to stay with fkms in this release, for regular RPi3 users, 'true' kms (vc4-kms-v3d) should prove an entirely viable option now (and this can easily be selected via the pyconfig_gen application); I have one system that has been running this for weeks now, and it seems very usable (and exhibits maybe 5-10% more GL bandwidth relative to an fkms system, when compared on a like-for-like, no-display-manager-compositing basis). Please note that under vc4-kms-v3d, window manager compositing should be turned off to prevent periodic 'stalling' of the GUI, and so I have modified the existing rpi3-safecompositor service to do this automatically. For avoidance of doubt, fkms - the shipped default - is unaffected.
+
+* Various minor ebuild tidy-ups.
+
+* All packages brought up-to-date against the Gentoo tree, as of 19 February 2019 (which means e.g., www-client/firefox-65.0.1, www-client/chromium-72.0.3626.96-r1, app-office/libreoffice-6.1.5.2 etc. are bundled).
+
+
+Upgrading from an Earlier Release of the Image
+----------------------------------------------
+
+Users downloading this v1.4.1 image directly can of course omit the instructions below; as all settings have been correctly set up for you already.
+
+Users on earlier releases who wish to manually upgrade should follow the manual upgrade instructions to 1.3.1 provided on the project's Releases page on GitHub; the final step genup therein will actually bring you to a baseline v1.4.0 now.
+
+You can easily check your current version at any time, by issuing:
+
+demouser@pi64 ~ $ eix rpi3-64bit-meta
+
+Once upgraded, be sure that you merge all configuration file updates; in particular, this release contains changes to /boot/config.txt (supplied by the sys-boot/rpi3-boot-config package) which must be accepted to use the RPi3's hardware video codecs, and (optional) camera module. To do so, issue:
+
+demouser@pi64 ~ $ sudo dispatch-conf
+
+and follow the prompts (if you haven't modified this particular file yourself, the changes will already have happened, but if you have changed it, dispatch-conf will ask you what to do).
+
+
+Notes
+-----
+
+[1] There's still no 64-bit userland MMAL just yet, but things are getting closer; in any event, hardware video codec access is one of the big reasons people wanted MMAL ported to 64-bit in the first place, so getting access to this facility via the v4l2 m2m endpoints instead will obviate the need for it, in many cases ^-^
+
+[2] Once ffmpeg has the necessary v4l2 m2m codec support built in (which the version on the image has) then exploiting these features from the command line is trivial - see for example the CLI 'recipes' in this project's open wiki.
+
+sakaki@deciban.com
+

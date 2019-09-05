@@ -1,0 +1,23 @@
+{
+  "partitions": [
+    {
+      "label": "boot_gen",
+      "filesystem_type": "<raw/FAT/ext4/ntfs/partclone/unformatted/swap>",
+      "partition_size_nominal": $((DUMIBS[0] + 100)),
+      "want_maximised": <false/true>,
+      "uncompressed_tarball_size": $((DUMIBS[0])),
+      "mkfs_options": "<-F 32/-O ^huge_file/etc>",
+      "sha512sum": "${TARBALLSHA512S[0]}"
+    }
+,
+    {
+      "label": "root_gen",
+      "filesystem_type": "<raw/FAT/ext4/ntfs/partclone/unformatted/swap>",
+      "partition_size_nominal": $((DUMIBS[1] + 100)),
+      "want_maximised": <false/true>,
+      "uncompressed_tarball_size": $((DUMIBS[1])),
+      "mkfs_options": "<-F 32/-O ^huge_file/etc>",
+      "sha512sum": "${TARBALLSHA512S[1]}"
+    }
+  ]
+}

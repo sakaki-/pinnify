@@ -1,0 +1,20 @@
+{
+    "name":                     "gentoo64",
+    "description":              "64-bit Gentoo Linux ${RELEASE} for the RPi4 and RPi3, with Xfce4 desktop",
+    "release_date":             "${RELDATE}",
+    "feature_level":            0,
+    "supported_models": [
+        "Pi 3 Model B Rev",
+        "Pi 3 Model B Plus Rev",
+        "Pi 3 Model A Plus Rev",
+        "Pi 4 Model B Rev"
+    ],
+    "version":                  "${RELEASE}",
+    "kernel":                   "${KERNEL}",
+    "supports_backup":          "update",
+    "url":                      "https://github.com/sakaki-/gentoo-on-rpi-64bit",
+    "group":                    "General",
+    "username":                 "demouser",
+    "password":                 "raspberrypi64",
+    "sha512sum":                "${PSSHA512}"
+}

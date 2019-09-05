@@ -1,0 +1,882 @@
+#!/bin/bash
+#
+# Create a PINN-compatible set of filesystem tarballs + metadata,
+# given a compressed image file and OS profile (which this
+# script also allows you create and edit).
+#
+# Pretty basic right now! Only xz compressed image files (although
+# this would be easy to extend).
+#
+# Copyright (c) 2019 sakaki <sakaki@deciban.com>
+#
+# License (GPL v3.0)
+# ------------------
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+
+set -e
+set -u
+shopt -s nullglob
+
+# Scroll to the bottom of this script to follow the main program flow.
+
+# ********************** variables ********************* 
+PROGNAME="$(basename "${0}")"
+VERSION="0.0.1"
+ETCPROFILE="/etc/profile"
+UPDATERSDIR="/etc/${PROGNAME}/updaters.d"
+RED_TEXT="" GREEN_TEXT="" YELLOW_TEXT="" RESET_ATTS="" ALERT_TEXT=""
+if [[ -v TERM && -n "${TERM}" && "${TERM}" != "dumb" ]]; then
+    RED_TEXT="$(tput setaf 1)$(tput bold)"
+    GREEN_TEXT="$(tput setaf 2)$(tput bold)"
+    YELLOW_TEXT="$(tput setaf 3)$(tput bold)"
+    RESET_ATTS="$(tput sgr0)"
+    ALERT_TEXT="$(tput bel)"
+fi
+declare -i VERBOSITY=1
+PREFIXSTRING="* "
+SHOWPREFIX="${GREEN_TEXT}${PREFIXSTRING}${RESET_ATTS}"
+SHOWSUFFIX=""
+VERBOSITYFLAG=""
+ASKFLAG=""
+ALERTFLAG=""
+
+SOURCEIMAGE=""
+SOURCEIMAGELOOP=""
+OSNAME=""
+ARCHIVETYPE=""
+declare -a PARTNAMES=(boot root)
+declare -i NUMPARTS=2
+declare -a DUKIBS=()
+declare -a DUMIBS=()
+declare -i TOTALDUKIB=0 TOTALDUMIB=0
+declare -a TARBALLBYTES=()
+declare -a TARBALLNAMES=()
+declare -i TOTALTARBALLBYTE=0
+declare -a TARBALLSHA512S=()
+declare -i TOTALNOMINALMIB=0
+
+WORKDIR="/var/lib/${PROGNAME}"
+UNARCHIVEDIR=""
+UNPACKEDIMG=""
+NEXTPARTMNT=""
+COMMAND=""
+LOCAL="/local" # TODO set as "" for live
+METATEMPLATEDIR="/usr${LOCAL}/share/${PROGNAME}/templates"
+TEMPLATEDIR="/var${LOCAL}/lib/${PROGNAME}/templates"
+OSTEMPLATEDIR=""
+BASEDIR=""
+RELEASE=""
+KERNEL=""
+PSSHA512=""
+TARGETDIR=""
+RELDATE=""
+OSJSONDATA=""
+BASEURL=""
+
+EDITOR="/usr/bin/nano"
+
+# program arguments (booleans in this case)
+declare -i ARG_ASK=0 ARG_HELP=0
+declare -i ARG_VERBOSE=0 ARG_VERSION=0
+declare -i ARG_ALERT=0 ARG_FORCE=0 ARG_NO_BRACKET_CHECK=0
+declare -i ADJUSTMENT=19
+declare -i PERFORMED_MEANINGFUL_ACTION=1
+
+declare -i RAWSIZE=0
+declare -i FREESPACE=0
+
+# force TERM if none found (e.g. when running from cron)
+if ! tty -s; then
+    export TERM="dumb"
+fi
+# store copy of original args, and canonical path to script itself
+ORIGINAL_ARGS="${@}"
+SCRIPTPATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+# ***************** various functions ******************
+
+cleanup_and_exit_with_code() {
+    # add any cleanup code here
+    trap - EXIT
+    ensure_loop_partitions_unmounted
+    unmount_source_image_loop
+    delete_session_working_directory
+    exit $1
+}
+
+show() {
+    local MESSAGE=${1:-""}
+    local VERBLEVEL=${2:-${VERBOSITY}}
+    if (( VERBLEVEL >=1 )); then
+        echo -e "${SHOWPREFIX}${MESSAGE}${SHOWSUFFIX}"
+    fi
+}
+
+alertshow() {
+    local MESSAGE=${1:-""}
+    local VERBLEVEL=${2:-${VERBOSITY}}
+    if ((ARG_ALERT==0)); then
+        show "${@}"
+    elif (( VERBLEVEL >=1 )); then
+        echo -e "${SHOWPREFIX}${MESSAGE}${SHOWSUFFIX}${ALERT_TEXT}"
+    fi
+}
+
+warning() {
+    echo -e "${YELLOW_TEXT}${PREFIXSTRING}${RESET_ATTS}${PROGNAME}: Warning: ${1}" >&2
+}
+
+error() {
+    echo -e "${RED_TEXT}${PREFIXSTRING}${RESET_ATTS}${PROGNAME}: Error: ${1}" >&2
+}
+
+die() {
+    echo
+    echo -e "${RED_TEXT}${PREFIXSTRING}${RESET_ATTS}${PROGNAME}: Error: ${1} - exiting" >&2
+    cleanup_and_exit_with_code 1
+}
+
+trap_cleanup() {
+    trap - SIGHUP SIGQUIT SIGINT SIGTERM SIGKILL EXIT
+    die "Caught signal"
+}
+
+trap trap_cleanup SIGHUP SIGQUIT SIGINT SIGTERM SIGKILL EXIT
+
+test_yn() {
+    echo -n -e "${SHOWPREFIX}${1} (y/n)? ${SHOWSUFFIX}${ALERT_TEXT}"
+    read -r -n 1
+    echo
+    if [[ ${REPLY} =~ ^[Yy]$ ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+continue_yn() {
+    if ! test_yn "${1}"; then
+        echo -e "${RED_TEXT}${PREFIXSTRING}${RESET_ATTS}Quitting" >&2
+        cleanup_and_exit_with_code 1
+    fi
+}
+
+suppress_colours() {
+    RED_TEXT=""
+    GREEN_TEXT=""
+    YELLOW_TEXT=""
+    RESET_ATTS=""
+    SHOWPREFIX="${PREFIXSTRING}"
+}
+
+suppress_alert() {
+    ALERT_TEXT=""
+}
+
+suppress_colour_and_alert_if_output_not_to_a_terminal() {
+    if [ ! -t 1 -o ! -t 2 ]; then
+        # we are going to a non-terminal
+        suppress_colours
+        suppress_alert
+    fi
+}
+
+set_idle_io_priority() {
+    # prevent our operations stalling swap
+    ionice -c 3 -p $$
+}
+
+display_greeting() {
+    show "PINN image creator v${VERSION}"
+}
+
+check_running_as_root() {
+    (( UID == 0 )) || die "You must be root to run this program"
+}
+
+check_deps_installed() {
+    local DEP
+    for DEP in bsdtar losetup tty tput file date xz \
+               mktemp mount umount du nice sha512sum \
+               ionice df sed echo findmnt grep getopt \
+               unzip; do
+        if ! which "${DEP}" &>/dev/null; then
+            die "Necessary program '${DEP}' not found: please install and try again"
+        fi
+    done
+}
+
+check_metatemplate_directory_exists() {
+    [[ -d "${METATEMPLATEDIR}" ]] || \
+        die "Template directory '${METATEMPLATEDIR}' does not exist"
+}
+
+check_workdir_and_create_if_necessary() {
+    # this top-level workdir is _not_ cleaned up at the end of
+    # runs; note that we don't use /tmp as the workdir, as
+    # users sometimes mount (small) tmpfs there
+    if [[ -e "${WORKDIR}" ]]; then
+        if [[ ! -d "${WORKDIR}" ]]; then
+            die "${WORKDIR} exists, but is not a directory"
+        fi
+    else
+        show "Creating working directory '${WORKDIR}'"
+        mkdir -p ${VERBOSITYFLAG} "${WORKDIR}" || \
+            die "Failed to create"
+    fi
+}
+
+check_source_image_exists_and_is_valid() {
+    [[ -s "${SOURCEIMAGE}" ]] || die "Image '${SOURCEIMAGE}' not found or empty"
+    # make sure we can use path even if we change directories
+    SOURCEIMAGE="$(readlink --canonicalize "${SOURCEIMAGE}")"
+    # only works with xz compressed images for now; expand in future
+    local MAGIC="$(file "${SOURCEIMAGE}")"
+    ARCHIVETYPE=""
+    if grep -q "XZ compressed data$" <<<"${MAGIC}"; then
+        ARCHIVETYPE="XZ"
+    elif
+        grep -q "Zip archive data" <<<"${MAGIC}"; then
+        ARCHIVETYPE="Zip"
+    fi
+    if [[ ! "${ARCHIVETYPE}" ]]; then
+        die "File '${SOURCEIMAGE}' is not an known archive type"
+    fi
+}
+
+check_or_infer_release_date() {
+    # use last modification time of source image file, if no
+    # explicit date provided
+    if [[ "${RELDATE}" ]]; then
+        [[ "${RELDATE}" =~ [[:digit:]]{4}-[[:digit:]]{2}-[[:digit:]]{2} ]] && \
+            date -d "${RELDATE}" &>/dev/null || die "Badly formatted release date '${RELDATE}'"
+    else
+        RELDATE="$(date -r "${SOURCEIMAGE}" "+%Y-%m-%d")"
+    fi
+}
+
+compute_uncompressed_image_size() {
+    if [[ "XZ" == "${ARCHIVETYPE}" ]]; then
+        RAWSIZE="$(xz --list --robot "${SOURCEIMAGE}" | tail -n 1 | cut -f 5)"
+    elif [[ "Zip" == "${ARCHIVETYPE}" ]]; then
+        RAWSIZE="$(unzip -l "${SOURCEIMAGE}" | tail -n 1 | cut -d' ' -f 1)"
+    else
+        die "Unrecognized archive format"
+    fi
+}
+
+check_sufficient_free_space_for_unarchive() {
+    FREESPACE="$(df --output="avail" --block-size=1 "${WORKDIR}" | tail -n 1)"
+    if (( FREESPACE < ( ( RAWSIZE * 150 ) / 100 ) )); then
+        die "Insufficient free space to unarchive image"
+    fi
+}
+
+create_session_working_directory() {
+    # session directory deleted at end of process (even if
+    # an error occurs)
+    UNARCHIVEDIR="$(mktemp --directory --tmpdir="${WORKDIR}" "image-XXXX")"
+    ((VERBOSITY>1)) && echo "Session working directory: '${UNARCHIVEDIR}'"
+    UNPACKEDIMG="${UNARCHIVEDIR}/unpacked.img"
+    NEXTPARTMNT="${UNARCHIVEDIR}/nextpart"
+}
+
+delete_session_working_directory() {
+    if [[ "${UNARCHIVEDIR}" && "${UNARCHIVEDIR}" =~ "image" ]]; then
+        rm ${VERBOSITYFLAG} -rf "${UNARCHIVEDIR}"
+    fi
+}
+
+loop_mount_source_image() {
+    # we use losetup rather than kpartx here, as the former is
+    # more commonly deployed
+    SOURCEIMAGELOOP="$(losetup --show --partscan --read-only --find "${UNPACKEDIMG}")" || \
+        die "Cannot mount ${SOURCEIMAGE}"
+    show "Mounted ${SOURCEIMAGE} on ${SOURCEIMAGELOOP}"
+}
+
+unmount_source_image_loop() {
+    if [[ ${SOURCEIMAGELOOP} ]]; then
+        show "Unmounting ${SOURCEIMAGELOOP}"
+        losetup ${VERBOSITYFLAG} --detach "${SOURCEIMAGELOOP}"
+        SOURCEIMAGELOOP=""
+    fi
+}
+
+check_image_has_expected_number_of_partitions() {
+    local BASELOOP="$(basename "${SOURCEIMAGELOOP}")"
+    local ACTNUMPARTS="$(wc -l <(find /dev/ -name "${BASELOOP}p[[:digit:]]") | cut -d" " -f 1)"
+    if (( ACTNUMPARTS == NUMPARTS )); then
+        show "${ACTNUMPARTS} partitions located in ${SOURCEIMAGELOOP}, continuing"
+    else
+        die "Found ${ACTNUMPARTS} partitions in ${SOURCEIMAGELOOP}, expected ${NUMPARTS}"
+    fi
+}
+
+unarchive_image() {
+    # there are fuse filesystems that can do this on the fly for some compression
+    # types, but not (afaik anyway) for XZ, so just uncompress straightforwardly
+    # TODO - extend the types handled in future (should be relatively straightforward)
+    show "Temporarily decompressing image (may take some time)"
+    if [[ "XZ" == "${ARCHIVETYPE}" ]]; then
+        xz ${VERBOSITYFLAG} --decompress --stdout "${SOURCEIMAGE}" > "${UNPACKEDIMG}"
+    elif [[ "Zip" == "${ARCHIVETYPE}" ]]; then
+        # assume there's only one file in there, and it's an image
+        unzip ${VERBOSITYFLAG} -p "${SOURCEIMAGE}" > "${UNPACKEDIMG}"
+    else
+        die "Failed to unarchive image: unknown type"
+    fi
+}
+
+analyse_and_tar_up_each_partition() {
+    # loop through the partitions, tarring each one up
+    # and compressing it, and capturing various metadata as
+    # we do
+    show "Creating temporary mountpoint"
+    mkdir -p ${VERBOSITYFLAG} "${NEXTPARTMNT}"
+    local M T
+    local -i N=0
+    for M in "${PARTNAMES[@]}"; do
+        N+=1
+        show "Analysing partition '${M}'"
+        mount ${VERBOSITYFLAG} -o ro ${SOURCEIMAGELOOP}p${N} "${NEXTPARTMNT}"
+        # find the rounded-up size of file system in MiB
+        show "Finding size of partition '${M}' in KiB, MiB"
+        DUKIBS+=("$(du -BK -s "${NEXTPARTMNT}" | cut -dK -f1)")
+        DUMIBS+=( $((1+DUKIBS[N-1]/1024)) )
+        # create tarball
+        show "Tarring up partition '${M}'"
+        bsdtar --numeric-owner --format gnutar --one-file-system \
+               -cpf "${UNARCHIVEDIR}/${M}.tar" \
+               -C "${NEXTPARTMNT}" .
+        umount ${VERBOSITYFLAG} "${NEXTPARTMNT}"
+        show "Compressing tarball (may take some time)"
+        nice -n ${ADJUSTMENT} xz -9e -T0 ${VERBOSITYFLAG} --memlimit-compress=70% "${UNARCHIVEDIR}/${M}.tar"
+        T="${UNARCHIVEDIR}/${M}.tar.xz"
+        TARBALLNAMES+=("${T}")
+        TARBALLBYTES+=("$(stat --printf="%s" "${T}")")
+        TARBALLSHA512S+=("$(sha512sum "${T}" | cut -d' ' -f1)")
+    done
+    TOTALTARBALLBYTE="$((${TARBALLBYTES[@]/%/+}0))"
+    TOTALDUKIB="$((${DUKIBS[@]/%/+}0))"
+    TOTALDUMIB="$((${DUMIBS[@]/%/+}0))"
+    if ((VERBOSITY>2)); then
+        # print debug info
+        echo "Got KiB sizes of: ${DUKIBS[@]}, MiB sizes of: ${DUMIBS[@]}"
+        echo "Got compressed tarball sizes of: ${TARBALLBYTES[@]} bytes, total: ${TOTALTARBALLBYTE} bytes"
+        echo "Got tarball names of: "${TARBALLNAMES[@]}
+    fi
+}
+
+compute_partition_setup_sha512() {
+    PSSHA512="$(sha512sum "${TARGETDIR}/partition_setup.sh" | cut -d' ' -f1)"
+}
+
+tar_up_slides_vga() {
+    bsdtar --numeric-owner --format gnutar --one-file-system \
+               -cpf "${TARGETDIR}/marketing.tar" \
+               -C "${TARGETDIR}" "slides_vga"
+}
+
+create_indented_reduced_os_json_data() {
+    local NEXTLINE=""
+    OSJSONDATA=""
+    while IFS= read -r NEXTLINE; do
+        if [[ "${NEXTLINE}" =~ ^[{}] ]]; then
+            continue
+        fi
+        # purge unwanted keys
+        # TODO ensure this list is complete
+        if [[ "${NEXTLINE}" =~ \"(kernel|username|password|version|sha512sum)\": ]]; then
+            continue
+        fi
+        NEXTLINE="${NEXTLINE/\"name\":   /\"os_name\":}"
+        OSJSONDATA+="        ${NEXTLINE}"
+        OSJSONDATA+=$'\n'
+    done < "${TARGETDIR}/os.json"
+}
+
+copy_file_with_evaluated_arguments() {
+    # path of source file as $1
+    # path of destination file as $2
+    # list of strings to match as $3 (array)
+    # each line from the source file will be matched against this, and if a match
+    # occurs (and the line contains ":") everything after the : will be
+    # evaluated before being copied; if no match, the line will be copied verbatim
+    # if $4 is 1 (0 default), truncate $2 before starting out
+    # pretty crude as it stands, and no error checking is done
+    local NEXTLINE NEXTCHECK NEXTKEY NEXTVALUE
+    local -i FOUND=0
+    local -n MATCHES=${3}
+    (( ${4:-0} == 1 )) && > "${2}"
+    while IFS= read -r NEXTLINE; do
+        # quote marks are difficult to handle cleanly in bash,
+        # particularly with multiple levels of substitution, so swap them
+        # for a placeholder whilst we work
+        NEXTLINE="${NEXTLINE//\"/@@@@}"
+        if [[ "${NEXTLINE}" =~ "\${OSJSONDATA}" ]]; then
+            # special case for modified transclusion of os.json into os_list.json
+            echo "${OSJSONDATA}" >> "${2}"
+            continue
+        elif [[ "${NEXTLINE}" =~ \< || ! "${NEXTLINE}" =~ ":" ]]; then
+            # not a valid json key/value pair, copy verbatim
+            echo "${NEXTLINE//@@@@/\"}" >> "${2}"
+            continue
+        fi
+        NEXTKEY="${NEXTLINE%%:*}"
+        NEXTVALUE="${NEXTLINE#*:}"
+        FOUND=0
+        for NEXTCHECK in "${MATCHES[@]}"; do
+            if [[ "${NEXTVALUE}" =~ "${NEXTCHECK}" ]]; then
+                FOUND=1
+                break
+            fi
+        done
+        if ((FOUND==0)); then
+            echo "${NEXTLINE//@@@@/\"}" >> "${2}"
+        else
+            echo -n "${NEXTKEY//@@@@/\"}:" >> "${2}"
+            eval echo "\"${NEXTVALUE}\"" | sed -e 's#@@@@#\"#g' >> "${2}"
+        fi
+    done < "${1}"
+}
+
+ensure_loop_partitions_unmounted() {
+    if [[ "${NEXTPARTMNT}" && -d "${NEXTPARTMNT}" ]] && findmnt "${NEXTPARTMNT}" &>/dev/null; then
+        warning "Unmounting ${NEXTPARTMNT}"
+        umount ${VERBOSITYFLAG} "${NEXTPARTMNT}" || true
+    fi
+}
+
+list_os_templates() {
+    show "Currently installed OS templates:"
+    if [[ ! -d "${TEMPLATEDIR}" ]]; then
+        echo "   None"
+    else
+        local -a TEMPLATES=("${TEMPLATEDIR}"/*)
+        if (( ${#TEMPLATES[@]} == 0 )); then
+            echo "   None"
+        else
+            local NEXTT
+            for NEXTT in "${TEMPLATES[@]}"; do
+                echo "   $(basename "${NEXTT}")"
+            done
+        fi
+    fi
+}
+
+create_os_template() {
+    # create an os-specific template from the generic meta-template
+    # user must then edit this before creating releases for that os
+    show "Creating new template in '${OSTEMPLATEDIR}'"
+    if [[ -d "${OSTEMPLATEDIR}" ]]; then
+        if ((ARG_FORCE==1)); then
+            [[ "${OSTEMPLATEDIR}" && "${OSTEMPLATEDIR}" =~ "/var" ]] && rm -rf ${VERBOSITYFLAG} "${OSTEMPLATEDIR}"
+        else
+            die "Directory '${OSTEMPLATEDIR}' exists (-f to overwrite)"
+        fi
+    fi
+    mkdir -p ${VERBOSITYFLAG} "${OSTEMPLATEDIR}"
+    # now copy baseline files into template
+    sed -e "s#\${OSNAME}#${OSNAME}#g" "${METATEMPLATEDIR}/os.json" > "${OSTEMPLATEDIR}/os.json"
+    cp "${METATEMPLATEDIR}/partitions_head.json" "${OSTEMPLATEDIR}/partitions.json"
+    sed -e "s#\${OSNAME}#${OSNAME}#g" \
+        -e "s#\${BASEURL}#${BASEURL}#g" "${METATEMPLATEDIR}/os_list_head.json" > "${OSTEMPLATEDIR}/os_list.json"
+    local M
+    local -i PNUM=0
+    for M in "${PARTNAMES[@]}"; do
+        # copy partition, subsituting in for $OSNAME and $PARTNAMES[${PNUM}], which we know
+        sed -e "s#\${PARTNAMES\[\${PNUM}\]}#${M}#g" \
+            -e "s#\[PNUM\]#[$PNUM]#g" "${METATEMPLATEDIR}/partition_entry.json" >> "${OSTEMPLATEDIR}/partitions.json"
+        sed -e "s#\${OSNAME}#${OSNAME}#g" \
+            -e "s#\${BASEURL}#${BASEURL}#g" \
+            -e "s#\${PARTNAMES\[\${PNUM}\]}#${M}#g" "${METATEMPLATEDIR}/os_list_entry.json" >> "${OSTEMPLATEDIR}/os_list.json"
+        if [[ "${M}" != "${PARTNAMES[-1]}" ]]; then
+            echo -e "\n," >> "${OSTEMPLATEDIR}/partitions.json"
+            echo "," >> "${OSTEMPLATEDIR}/os_list.json"
+        else
+            echo >> "${OSTEMPLATEDIR}/partitions.json"
+            echo >> "${OSTEMPLATEDIR}/os_list.json"
+        fi
+        PNUM+=1
+    done
+    cat "${METATEMPLATEDIR}/partitions_tail.json" >> "${OSTEMPLATEDIR}/partitions.json"
+    cat "${METATEMPLATEDIR}/os_list_tail.json" >> "${OSTEMPLATEDIR}/os_list.json"
+    cp -r "${METATEMPLATEDIR}/slides_vga" "${OSTEMPLATEDIR}/"
+    cp "${METATEMPLATEDIR}/partition_setup.sh" "${OSTEMPLATEDIR}/"
+    cp "${METATEMPLATEDIR}/release_notes.txt" "${OSTEMPLATEDIR}/"
+    cp "${METATEMPLATEDIR}/prepare_slides_vga.sh" "${OSTEMPLATEDIR}/"
+    cp "${METATEMPLATEDIR}/os_icon.png" "${OSTEMPLATEDIR}/${OSNAME}.png"
+}
+
+check_editor_exists() {
+    [[ -x "$(which "${EDITOR}")" ]] || die "Could not find editor '${EDITOR}'"
+}
+
+check_os_template_exists() {
+    [[ -d "${OSTEMPLATEDIR}" ]] || die "No template found for '${OSNAME}'"
+}
+
+check_basedir_exists() {
+    [[ -d "${BASEDIR}" ]] || die "Directory '${BASEDIR}' not found"
+}
+
+check_targetdir_absent_force_deleting_if_specified() {
+    if [[ -d "${TARGETDIR}" ]]; then
+        if ((ARG_FORCE==1)); then
+            # TODO make the following check more robust
+            [[ "${TARGETDIR}" && "${TARGETDIR}" =~ "/" ]] && rm -rf ${VERBOSITYFLAG} "${TARGETDIR}"
+        else
+            die "Directory '${TARGETDIR}' exists (-f to overwrite)"
+        fi
+    fi    
+}
+
+check_release_name_valid() {
+    # TODO improve this
+    [[ "${RELEASE}" =~ ^[[:alnum:]._+-]+$ ]] || die "Malformed release name '${RELEASE}'"
+}
+
+check_kernel_name_valid() {
+    # TODO improve this
+    [[ "${KERNEL}" =~ ^[[:alnum:]._+-]+$ ]] || die "Malformed kernel name '${KERNEL}'"
+}
+
+per_partition_decompress_tar_metadata_capture() {
+    # this is where the main action happens
+    # we create a temporary working directory, then decompress the
+    # given image, check its partition structure matches what the metadata
+    # describes, the run through each partition, tarring up the contents
+    # and capturing metadata (uncompressed filesystem size etc.)
+    compute_uncompressed_image_size
+    check_sufficient_free_space_for_unarchive
+    unarchive_image
+    loop_mount_source_image
+    check_image_has_expected_number_of_partitions
+    # TODO should probably check the filesystem type matches metadata, etc
+    analyse_and_tar_up_each_partition
+    unmount_source_image_loop
+}
+
+create_target_dir() {
+    # now all the action has happened in the workdir, create the target
+    mkdir -p ${VERBOSITYFLAG} "${TARGETDIR}"
+}
+
+move_tarballs_into_target_dir() {
+    local P
+    show "Moving tarballs into ${TARGETDIR}"
+    for P in "${TARBALLNAMES[@]}"; do
+        mv ${VERBOSITYFLAG} "${P}" "${TARGETDIR}/"
+    done
+}
+
+check_no_angle_brackets_left_in_template_files() {
+    # belt-and-braces check; can be disabled with -B
+    local NEXTFILE
+    if ((ARG_NO_BRACKET_CHECK==0)); then
+        for NEXTFILE in "${OSTEMPLATEDIR}"/*.json; do
+            if grep -q -e '\"<' -e '>\"' "${NEXTFILE}" 2>/dev/null; then
+                die "Please fully fill out ${NEXTFILE}; it still contains <default> text."
+            fi
+        done
+    fi
+}
+
+compute_total_nominal_mib() {
+    # extract from the partitions.json file, which must be fully
+    # substituted at this point
+    TOTALNOMINALMIB=0
+    local NEXTVAL
+    for NEXTVAL in $(grep "partition_size_nominal" "${TARGETDIR}/partitions.json" | cut -d: -f2 | cut -d, -f1); do
+        TOTALNOMINALMIB+=${NEXTVAL}
+    done
+}
+
+prepare_slides_vga() {
+    # the prepare_slides_vga.sh script can be used to e.g. programmatically
+    # insert a version number onto the slides, 'wash' their EXIF
+    # data etc.
+    if [[ -x "${OSTEMPLATEDIR}/prepare_slides_vga.sh" ]]; then
+        show "Preparing / updating slides_vga using script"
+        ( cd "${TARGETDIR}/slides_vga" && "${OSTEMPLATEDIR}"/prepare_slides_vga.sh "${RELEASE}" || true )
+    fi
+}
+
+read_partition_names() {
+    # used when the os template has already been set up
+    PARTNAMES=()
+    local NEXTVAL
+    for NEXTVAL in $(grep "\"label\":" "${OSTEMPLATEDIR}/partitions.json" | cut -d\" -f 4); do
+        PARTNAMES+=("${NEXTVAL}")
+    done
+    NUMPARTS=${#PARTNAMES[@]}
+}
+
+copy_and_fill_out_template_files_into_target_dir() {
+    # pull files from the os template into the target release
+    # directory, filling out variables as we do (using the
+    # metadata previously collected)
+    show "Copying template files into ${TARGETDIR}"
+    show "(and updating with release metadata)"
+    cp ${VERBOSITYFLAG} -r "${OSTEMPLATEDIR}/slides_vga" "${TARGETDIR}/"
+    cp ${VERBOSITYFLAG} "${OSTEMPLATEDIR}/partition_setup.sh" "${TARGETDIR}/"
+    cp ${VERBOSITYFLAG} "${OSTEMPLATEDIR}/release_notes.txt" "${TARGETDIR}/"
+    cp ${VERBOSITYFLAG} "${OSTEMPLATEDIR}/${OSNAME}.png" "${TARGETDIR}/"
+    compute_partition_setup_sha512
+    prepare_slides_vga
+    tar_up_slides_vga
+    # now the main json files - copy from the os template,
+    # substituting for specified variables (in $SUBS) as we go
+    local -a SUBS=("DUKIBS" "DUMIBS" "TARBALLBYTES" "TARBALLSHA512S")
+    copy_file_with_evaluated_arguments "${OSTEMPLATEDIR}/partitions.json" \
+                                       "${TARGETDIR}/partitions.json" \
+                                       SUBS \
+                                       1
+    compute_total_nominal_mib
+    SUBS=("RELDATE" "RELEASE" "KERNEL" "PSSHA512" "TOTALNOMINALMIB")
+    copy_file_with_evaluated_arguments "${OSTEMPLATEDIR}/os.json" \
+                                       "${TARGETDIR}/os.json" \
+                                       SUBS \
+                                       1
+    create_indented_reduced_os_json_data
+    SUBS=("OSJSONDATA" "RELDATE" "RELEASE" "KERNEL" "TOTALTARBALLBYTE" "TOTALDUKIB" "TOTALDUMIB" "TOTALNOMINALMIB")
+    copy_file_with_evaluated_arguments "${OSTEMPLATEDIR}/os_list.json" \
+                                       "${TARGETDIR}/os_list.json" \
+                                       SUBS \
+                                       1
+}
+
+edit_os_template_files () {
+    # allow the user to edit the template files for an os
+    ${EDITOR} "${OSTEMPLATEDIR}/"{partitions.json,os.json,os_list.json,partition_setup.sh,prepare_slides_vga.sh,release_notes.txt}
+}
+
+display_final_status() {
+    if ((PERFORMED_MEANINGFUL_ACTION==1)); then
+        show
+        show "All done!"
+    fi
+}
+
+# TODO implement ask (e.g. -i on rm actions etc.)
+
+print_usage() {
+    cat << EOF
+Usage: ${PROGNAME} <options> [command] [command_args]
+
+e.g.
+
+${PROGNAME} list-templates
+${PROGNAME} -p "boot_gen root_gen" create-template gentoo64 https://isshoni.org/pinn/os/
+${PROGNAME} edit-template gentoo64
+${PROGNAME} create-release gentoo64 v1.5.0 4.19.66 /root/releases/ genpi64.img.xz
+
+
+Options:
+  -a, --ask             turns on interactive mode: you must confirm key actions
+  -A, --alert           sound terminal bell when interaction required
+                        (selecting this also automatically selects --ask)
+  -B, --no-bracket-check
+                        don't check for "< or >" in OS template files
+  -e, --editor=E        set the editor to be E (default nano)
+  -f, --force           force operation, even where existing files would be
+                        overwritten
+  -h, --help            show this help message and exit
+  -p, --partnames       specify partition names (as a space separated list)
+                        defaults to "boot root" if not specified
+  -r, --adjustment=N    add N to niceness of CPU-intensive ops; -20<=N<=19
+                        (the default is 19, operating at lowest possible
+                        system priority to avoid slowing the system too much)
+  -v, --verbose         ask called programs to display more information
+  -V, --version         display the version number of ${PROGNAME} and exit
+  -w, --workdir=DIR     set top level working directory to be DIR; defaults to
+                        /var/lib/${PROGNAME}
+
+Commands:
+  list-templates        list currently defined OS templates
+  create-template OSNAME BASEURL
+                        create an editable template for an OS in
+                        ${TEMPLATEDIR}
+                        containing os.json, os_list.json, and partitions.json
+                        plus skeleton partition_setup.sh,
+                        prepare_slides_vga.sh, release_notes.txt
+                        OSNAME.png and slides_vga/ directory
+                        served from BASEURL/OSNAME/...
+  edit-template OSNAME  open the above files using the default editor
+                        (specify with -e/--editor)
+  create-release OSNAME RELEASE KERNEL BASEDIR IMAGE <RELDATE>
+                        create a release for the specified ${OSNAME} using the
+                        pre-created template, plus the given IMAGE, and
+                        save it into BASEDIR/OSNAME-RELEASE/...
+                        the release is RELEASE, kernel version KERNEL
+                        you may also specify RELDATE (YYYY-MM-DD); if not
+                        given, the last modification date of the source
+                        tarball will be used
+EOF
+}
+
+print_help() {
+    cat << EOF
+${PROGNAME} - create PINN compressed tarballs & metadata from bootable image
+EOF
+    print_usage
+}
+
+print_version() {
+    printf "%s\n" "${VERSION}"
+}
+
+display_usage_message_and_bail_out() {
+    if [ ! -z "${1+x}" ]; then
+        printf "%s: %s\n" "${PROGNAME}" "${1}" >&2
+    fi
+    print_usage >&2
+    cleanup_and_exit_with_code 1
+}
+
+internal_consistency_option_checks() {
+    # following not exhaustive, just some more obvious snafus
+    # TODO expand
+    if ((ADJUSTMENT<-20 || ADJUSTMENT>19)); then
+            display_usage_message_and_bail_out "must have -20 <= build niceness adjustment <= 19"
+    fi
+}
+
+process_command_line_options() {
+    local TEMP
+    declare -i RC
+    set +e
+        # error trapping off, as we want to handle errors
+        TEMP="$(getopt -o aABe:fhp:r:vVw: --long ask,alert,no-bracket-check,editor:,force,help,partnames:,adjustment:,verbose,version,-workdir: -n "${PROGNAME}" -- "${@}")"
+        RC="${?}"
+    set -e
+    if ((RC!=0)); then
+        display_usage_message_and_bail_out
+    fi
+    eval set -- "${TEMP}"
+    # extract options and their arguments into variables.
+    while true ; do
+        case "${1}" in
+            -a|--ask) ARG_ASK=1 ; shift ;;
+            -A|--alert) ARG_ALERT=1 ; ARG_ASK=1 ; shift ;;
+            -B|--no-bracket-check) ARG_NO_BRACKET_CHECK=1 ; shift ;;
+            -e|--editor) EDITOR="${2}" ; shift 2 ;;
+            -f|--force) ARG_FORCE=1 ; shift ;;
+            -h|--help) ARG_HELP=1 ; shift ;;
+            -p|--partnames) PARTNAMES=(${2}) ; shift 2 ;;
+            -r|--adjustment)
+                case "${2}" in
+                    "") shift 2 ;;
+                    *) ADJUSTMENT="${2}" ; shift 2 ;;
+                esac ;;
+            -v|--verbose) ARG_VERBOSE=1 ; shift ;;
+            -V|--version) ARG_VERSION=1 ; shift ;;
+            -w|--workdir) WORKDIR="${2}" ; shift 2 ;;
+            --) shift ; break ;;
+            *) die "Internal error!" ;;
+        esac
+    done
+    NUMPARTS=${#PARTNAMES[@]}
+    # process 'perform-then-exit' options
+    if ((ARG_HELP==1)); then
+        print_help
+        cleanup_and_exit_with_code 0
+    elif ((ARG_VERSION==1)); then
+        print_version
+        cleanup_and_exit_with_code 0
+    fi
+    (( $# == 0 )) && display_usage_message_and_bail_out
+    # now parse the rest
+    COMMAND="${1}"
+    if [[ "list-templates" == "${COMMAND}" ]]; then
+        (( $# != 1 )) && die "Usage: ${COMMAND}"
+    elif [[ "create-template" == "${COMMAND}" ]]; then
+        (( $# != 3 )) && die "Usage: ${COMMAND} OSNAME BASEURL"
+        OSNAME="${2}"
+        BASEURL="${3%/}"
+    elif [[ "edit-template" == "${COMMAND}" ]]; then
+        (( $# != 2 )) && die "Usage: ${COMMAND} OSNAME"
+        OSNAME="${2}"
+    elif [[ "create-release" == "${COMMAND}" ]]; then
+        (( $# != 6 && $# != 7 )) && die "Usage: ${COMMAND} OSNAME RELEASE KERNEL BASEDIR IMAGE <RELDATE>"
+        OSNAME="${2}"
+        RELEASE="${3}"
+        KERNEL="${4}"
+        BASEDIR="${5%/}"
+        [[ ! "${BASEDIR}" ]] && BASEDIR="/"
+        SOURCEIMAGE="${6}"
+        TARGETDIR="${BASEDIR}/${OSNAME}-${RELEASE}"
+        (( $# == 7 )) && RELDATE="${7}"
+    else
+        die "Unknown command '${COMMAND}'"
+    fi
+    OSTEMPLATEDIR="${TEMPLATEDIR}/${OSNAME}"
+    if ((ARG_VERBOSE==1)); then
+        VERBOSITY+=1
+    fi
+    if ((VERBOSITY>1)); then
+        VERBOSITYFLAG="--verbose"
+    fi
+    # set interactive mode
+    if ((ARG_ASK==1)); then
+        ASKFLAG="--ask"
+    fi
+    if ((ARG_ALERT==1)); then
+        ALERTFLAG="--alert"
+    else
+        suppress_alert
+    fi
+    internal_consistency_option_checks
+}
+
+# *************** start of script proper ***************
+suppress_colour_and_alert_if_output_not_to_a_terminal
+set_idle_io_priority
+process_command_line_options "${@}"
+check_running_as_root
+check_deps_installed
+check_metatemplate_directory_exists
+display_greeting
+if [[ "${COMMAND}" == "list-templates" ]]; then
+    list_os_templates
+    PERFORMED_MEANINGFUL_ACTION=0
+elif [[ "${COMMAND}" == "create-template" ]]; then
+    create_os_template
+elif [[ "${COMMAND}" == "edit-template" ]]; then
+    check_editor_exists
+    check_os_template_exists
+    edit_os_template_files
+elif [[ "${COMMAND}" == "create-release" ]]; then
+    check_os_template_exists
+    check_basedir_exists
+    check_targetdir_absent_force_deleting_if_specified
+    check_release_name_valid
+    check_kernel_name_valid
+    check_no_angle_brackets_left_in_template_files
+    read_partition_names
+    check_source_image_exists_and_is_valid
+    check_or_infer_release_date
+    check_workdir_and_create_if_necessary
+    create_session_working_directory
+    per_partition_decompress_tar_metadata_capture
+    create_target_dir
+    move_tarballs_into_target_dir
+    copy_and_fill_out_template_files_into_target_dir
+    delete_session_working_directory
+else
+    die "Internal error (unknown command '${COMMAND}')"
+fi
+display_final_status
+cleanup_and_exit_with_code 0
+# **************** end of script proper ****************

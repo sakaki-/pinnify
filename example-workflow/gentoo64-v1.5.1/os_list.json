@@ -1,0 +1,27 @@
+        {
+            "os_name":                  "gentoo64",
+            "description":              "64-bit Gentoo Linux v1.5.1 for the RPi4 and RPi3, with Xfce4 desktop",
+            "release_date":             "2019-09-01",
+            "feature_level":            0,
+            "supported_models": [
+                "Pi 3 Model B Rev",
+                "Pi 3 Model B Plus Rev",
+                "Pi 3 Model A Plus Rev",
+                "Pi 4 Model B Rev"
+            ],
+            "supports_backup":          "update",
+            "url":                      "https://github.com/sakaki-/gentoo-on-rpi-64bit",
+            "group":                    "General",
+
+            "download_size":            1662150980,
+            "os_info":                  "https://isshoni.org/pinn/os/gentoo64/os.json",
+            "partitions_info":          "https://isshoni.org/pinn/os/gentoo64/partitions.json",
+            "icon":                     "https://isshoni.org/pinn/os/gentoo64/gentoo64.png",
+            "marketing_info":           "https://isshoni.org/pinn/os/gentoo64/marketing.tar",
+            "partition_setup":          "https://isshoni.org/pinn/os/gentoo64/partition_setup.sh",
+            "tarballs": [
+                "https://isshoni.org/pinn/os/gentoo64/boot_gen.tar.xz",
+                "https://isshoni.org/pinn/os/gentoo64/root_gen.tar.xz"
+            ],
+            "nominal_size": 13674
+        }

@@ -1,0 +1,20 @@
+{
+    "name":                     "gentoo64lite",
+    "description":              "64-bit Gentoo Linux v1.5.1 for the RPi4 and RPi3, CLI only",
+    "release_date":             "2019-09-02",
+    "feature_level":            0,
+    "supported_models": [
+        "Pi 3 Model B Rev",
+        "Pi 3 Model B Plus Rev",
+        "Pi 3 Model A Plus Rev",
+        "Pi 4 Model B Rev"
+    ],
+    "version":                  "v1.5.1",
+    "kernel":                   "4.19.67",
+    "supports_backup":          "update",
+    "url":                      "https://github.com/sakaki-/gentoo-on-rpi-64bit",
+    "group":                    "Minimal",
+    "username":                 "demouser",
+    "password":                 "raspberrypi64",
+    "sha512sum":                "5a309f616a016ed509e50a49b64461392b755ee45c3bdf1acb142811e3dab7a88b146a76543e362d039d188cff9b2664ac7d09efa15a71f381b5cc4ea1b6006f"
+}

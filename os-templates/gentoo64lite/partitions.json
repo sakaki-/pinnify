@@ -1,0 +1,23 @@
+{
+  "partitions": [
+    {
+      "label": "boot_gen_lite",
+      "filesystem_type": "FAT",
+      "partition_size_nominal": 255,
+      "want_maximised": false,
+      "uncompressed_tarball_size": $((DUMIBS[0])),
+      "mkfs_options": "-F 32",
+      "sha512sum": "${TARBALLSHA512S[0]}"
+    }
+,
+    {
+      "label": "root_gen_lite",
+      "filesystem_type": "ext4",
+      "partition_size_nominal": $((DUMIBS[1] + 1024*2)),
+      "want_maximised": true,
+      "uncompressed_tarball_size": $((DUMIBS[1])),
+      "mkfs_options": "-O ^huge_file",
+      "sha512sum": "${TARBALLSHA512S[1]}"
+    }
+  ]
+}

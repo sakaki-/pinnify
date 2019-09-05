@@ -1,0 +1,20 @@
+{
+    "name":                     "gentoo64",
+    "description":              "<Description here, can include ${RELEASE}>",
+    "release_date":             "${RELDATE}",
+    "feature_level":            0,
+    "supported_models": [
+        "Pi 3 Model B Rev",
+        "Pi 3 Model B Plus Rev",
+        "Pi 3 Model A Plus Rev",
+        "Pi 4 Model B Rev"
+    ],
+    "version":                  "${RELEASE}",
+    "kernel":                   "${KERNEL}",
+    "supports_backup":          "<true/false/update>",
+    "url":                      "<URL>",
+    "group":                    "<General/Minimal/Education/Media/Utitlity/Games>",
+    "username":                 "<default_username>",
+    "password":                 "<default_password>",
+    "sha512sum":                "${PSSHA512}"
+}

@@ -1,0 +1,9 @@
+        {
+            ${OSJSONDATA},
+            "download_size":            $((TOTALTARBALLBYTE)),
+            "os_info":                  "${BASEURL}/${OSNAME}/os.json",
+            "partitions_info":          "${BASEURL}/${OSNAME}/partitions.json",
+            "icon":                     "${BASEURL}/${OSNAME}/${OSNAME}.png",
+            "marketing_info":           "${BASEURL}/${OSNAME}/marketing.tar",
+            "partition_setup":          "${BASEURL}/${OSNAME}/partition_setup.sh",
+            "tarballs": [

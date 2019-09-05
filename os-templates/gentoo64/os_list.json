@@ -1,0 +1,14 @@
+        {
+            ${OSJSONDATA},
+            "download_size":            $((TOTALTARBALLBYTE)),
+            "os_info":                  "https://isshoni.org/pinn/os/gentoo64/os.json",
+            "partitions_info":          "https://isshoni.org/pinn/os/gentoo64/partitions.json",
+            "icon":                     "https://isshoni.org/pinn/os/gentoo64/gentoo64.png",
+            "marketing_info":           "https://isshoni.org/pinn/os/gentoo64/marketing.tar",
+            "partition_setup":          "https://isshoni.org/pinn/os/gentoo64/partition_setup.sh",
+            "tarballs": [
+                "https://isshoni.org/pinn/os/gentoo64/boot_gen.tar.xz",
+                "https://isshoni.org/pinn/os/gentoo64/root_gen.tar.xz"
+            ],
+            "nominal_size": $((TOTALNOMINALMIB))
+        }

@@ -1,0 +1,9 @@
+    {
+      "label": "${PARTNAMES[${PNUM}]}",
+      "filesystem_type": "<raw/FAT/ext4/ntfs/partclone/unformatted/swap>",
+      "partition_size_nominal": $((DUMIBS[PNUM] + 100)),
+      "want_maximised": <false/true>,
+      "uncompressed_tarball_size": $((DUMIBS[PNUM])),
+      "mkfs_options": "<-F 32/-O ^huge_file/etc>",
+      "sha512sum": "${TARBALLSHA512S[PNUM]}"
+    }

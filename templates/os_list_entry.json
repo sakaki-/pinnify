@@ -1,0 +1,1 @@
+                "${BASEURL}/${OSNAME}/${PARTNAMES[${PNUM}]}.tar.xz"
