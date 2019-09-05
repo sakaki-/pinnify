@@ -4,8 +4,8 @@
 # given a compressed image file and OS profile (which this
 # script also allows you create and edit).
 #
-# Pretty basic right now! Only xz compressed image files (although
-# this would be easy to extend).
+# Pretty basic right now! Only allows use of xz and zip compressed
+# image files (although this would be easy to extend).
 #
 # Copyright (c) 2019 sakaki <sakaki@deciban.com>
 #
