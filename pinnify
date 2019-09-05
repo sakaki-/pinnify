@@ -240,7 +240,7 @@ check_source_image_exists_and_is_valid() {
     [[ -s "${SOURCEIMAGE}" ]] || die "Image '${SOURCEIMAGE}' not found or empty"
     # make sure we can use path even if we change directories
     SOURCEIMAGE="$(readlink --canonicalize "${SOURCEIMAGE}")"
-    # only works with xz compressed images for now; expand in future
+    # only works with xz and zip compressed images for now; expand in future
     local MAGIC="$(file "${SOURCEIMAGE}")"
     ARCHIVETYPE=""
     if grep -q "XZ compressed data$" <<<"${MAGIC}"; then
