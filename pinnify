@@ -554,7 +554,7 @@ check_kernel_name_valid() {
 
 per_partition_decompress_tar_metadata_capture() {
     # this is where the main action happens
-    # we create a temporary working directory, then decompress the
+    # having created a temporary working directory, we decompress the
     # given image, check its partition structure matches what the metadata
     # describes, the run through each partition, tarring up the contents
     # and capturing metadata (uncompressed filesystem size etc.)
