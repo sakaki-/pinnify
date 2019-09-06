@@ -508,7 +508,7 @@ umount /tmp/2
 
 #### `release_notes.txt`
 
-There are ways to approach this file in the OS template:
+There are two different ways to approach this file in the OS template:
 1. If the text is specific to each release _only_, then leave it empty in the template, and just fill it out in the release directory each time afresh.
 1. However if, as here, the text _grows_ with each release, then it makes sense to edit the template each time, top-posting the new content. As such we place the following in that file (shortened here for brevity):
 
