@@ -721,8 +721,8 @@ Commands:
                         save it into BASEDIR/OSNAME-RELEASE/...
                         the release is RELEASE, kernel version KERNEL
                         you may also specify RELDATE (YYYY-MM-DD); if not
-                        given, the last modification date of the source
-                        tarball will be used
+                        given, the last modification date of IMAGE
+                        will be used
 EOF
 }
 
