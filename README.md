@@ -101,7 +101,7 @@ First, we'll need a compressed image file for the OS, so download release `v1.5.
 We know the kernel version is `4.19.67`, so let's create a releases directory, and build it!
 
 ```console
-# mkdir /root/releases
+# mkdir -p /root/releases
 # pinnify create-release gentoo64lite v1.5.1 4.19.67 /root/releases/ /root/genpi64lite.img.xz
 * PINN image creator v0.0.1
 * Temporarily decompressing image (may take some time)
