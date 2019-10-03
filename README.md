@@ -265,7 +265,7 @@ As you can see, `pinnify` has already created two partition entries for us and n
 
 For some of the fields (such as _e.g._, `filesystem_type`) we need to explicitly edit the template, and select a specific variant. We can also add other (legitimate PINN) fields if required.
 
-For this OS, we know our first (array index 0!) partition is `FAT32` formatted. We elect to make it a fixed 255 MiB in size, regardless of the extent of the `boot_gen.tar.xz` tarball's contents (they'll be much smaller), and _not_ to maximize it to take up all remaining free space, which is normal practice for a bootfs.
+For this OS, we know our first (array index 0!) partition is `FAT32` formatted. We elect to make it - as is normal practice for a bootfs - fixed in size, in this case 255 MiB, regardless of the extent of the `boot_gen.tar.xz` tarball's contents (they'll be much smaller), and _not_ to maximize it to take up all remaining free space.
 
 Also, we know that the second (array index 1) partition is `ext4` formatted. We elect to require at least 4GiB more than the minimal size for the partition, and to maximize the partition (and filesystem) to fill all available space.
 
@@ -359,6 +359,10 @@ Again, we fill this out with OS-specific information (description, default user 
 }
 ```
 
+One field that is perhaps not self-evident here is `supports_backup`. Its value depends on whether the target OS' `partition_setup.sh` script (see [below](#partition_setup.sh)) can restore the OS from a PINN backup or not.
+* If it can (and always has been since its first version released on PINN), use `true`.
+* If it cannot, or your OS cannot be straightforwardly backed up (`btrfs` filesystem etc.), use `false`.
+* If it can restore now, but some older (PINN-released) versions could not, use (the string value) `"update"`. It is safe to use `"update"` in place of `true`.
 
 #### <a id="os_list.json"></a>`os_list.json`
 
@@ -504,6 +508,8 @@ umount /tmp/1
 umount /tmp/2
 
 ```
+
+> Note how the `$restore` variable is checked in the above. This is unset on initial install, and set when a backed-up OS is being reinstalled or restored over an existing installation, and during PINN's "fix - rerun partition_setup" action. As such, it may be used to prevent one-time operations in `partition_setup.sh` being run a second time.
 
 
 #### `release_notes.txt`
